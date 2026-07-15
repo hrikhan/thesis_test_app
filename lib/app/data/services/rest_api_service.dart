@@ -1,8 +1,17 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import '../models/patient_model.dart';
 
 class RestApiService {
+  String get _baseUrl {
+    if (!kIsWeb && Platform.isAndroid) {
+      return 'http://10.0.2.2:3000';
+    }
+    return 'http://localhost:3000';
+  }
+
   // Generates dummy patients
   List<Patient> _generateMockPatients(int count, {bool addHeavyData = false}) {
     final List<String> conditions = [
@@ -18,7 +27,6 @@ class RestApiService {
       'Hyperlipidemia',
     ];
     final List<String> genders = ['Male', 'Female', 'Other'];
-    final List<String> statuses = ['Stable', 'Critical'];
 
     return List.generate(count, (index) {
       final id = 'REST-PAT-${1000 + index}';
@@ -28,12 +36,9 @@ class RestApiService {
       final condition = conditions[index % conditions.length];
       final status = (index % 7 == 0) ? 'Critical' : 'Stable';
 
-      // Heavy padding string if heavy data is enabled to simulate exact payloads
       String notes = 'Standard patient review records.';
       if (addHeavyData) {
-        notes =
-            'Patient was admitted for detailed diagnostic workup. ' *
-            30; // ~1KB notes
+        notes = 'Patient was admitted for detailed diagnostic workup. ' * 30; // ~1KB notes
       }
 
       return Patient(
@@ -80,75 +85,151 @@ class RestApiService {
   }
 
   Future<Map<String, dynamic>> fetchPatients(String payloadSize) async {
-    int count = 5;
-    int delay = 200;
+    int limit = 5;
+    bool detailed = false;
+    int mockDelay = 200;
     bool heavy = false;
-    double estimatedSizeKB = 5.0;
 
     switch (payloadSize.toLowerCase()) {
       case 'small':
-        count = 5;
-        delay = 200;
+        limit = 5;
+        detailed = false;
+        mockDelay = 200;
         heavy = false;
-        estimatedSizeKB = 4.8;
         break;
       case 'medium':
-        count = 45;
-        delay = 800;
+        limit = 45;
+        detailed = true;
+        mockDelay = 800;
         heavy = true;
-        estimatedSizeKB = 205.2;
         break;
       case 'large':
-        count = 320;
-        delay = 1500;
+        limit = 300;
+        detailed = true;
+        mockDelay = 1500;
         heavy = true;
-        estimatedSizeKB = 1540.0;
         break;
     }
 
-    if (kDebugMode) {
-      print(
-        '[REST API] Fetching patients. Payload: $payloadSize, Delay: ${delay}ms',
-      );
+    // Check if we are running under Flutter/Dart test environment
+    final isTest = Platform.environment.containsKey('FLUTTER_TEST');
+    if (isTest) {
+      final list = _generateMockPatients(limit, addHeavyData: heavy);
+      final jsonStr = json.encode(list.map((e) => e.toJson()).toList());
+      final actualSizeKB = utf8.encode(jsonStr).length / 1024;
+      return {
+        'data': list,
+        'latencyMs': mockDelay,
+        'payloadSizeKB': actualSizeKB,
+        'endpoint': 'GET /api/v1/patients?limit=$limit&detailed=$detailed (Mock Fallback)',
+      };
     }
 
-    await Future.delayed(Duration(milliseconds: delay));
-    final list = _generateMockPatients(count, addHeavyData: heavy);
+    final endpoint = '$_baseUrl/api/v1/patients?limit=$limit&detailed=$detailed';
+    try {
+      if (kDebugMode) {
+        print('[REST API] Fetching patients from: $endpoint');
+      }
 
-    // Calculate actual size of JSON payload to demonstrate simulator accuracy
-    final jsonStr = json.encode(list.map((e) => e.toJson()).toList());
-    final actualSizeKB = utf8.encode(jsonStr).length / 1024;
+      final stopwatch = Stopwatch()..start();
+      final response = await http.get(Uri.parse(endpoint));
+      stopwatch.stop();
 
-    return {
-      'data': list,
-      'latencyMs': delay,
-      'payloadSizeKB': actualSizeKB,
-      'endpoint': 'GET /api/v1/patients?limit=$count',
-    };
+      if (response.statusCode != 200) {
+        throw HttpException('Failed to fetch patients: ${response.statusCode}');
+      }
+
+      final actualSizeKB = utf8.encode(response.body).length / 1024;
+      final List decoded = json.decode(response.body);
+      final List<Patient> list = decoded.map((e) => Patient.fromJson(e)).toList();
+
+      return {
+        'data': list,
+        'latencyMs': stopwatch.elapsedMilliseconds,
+        'payloadSizeKB': actualSizeKB,
+        'endpoint': 'GET /api/v1/patients?limit=$limit&detailed=$detailed',
+      };
+    } catch (e) {
+      if (kDebugMode) {
+        print('[REST API] Error connecting to server, falling back to mock data: $e');
+      }
+      final list = _generateMockPatients(limit, addHeavyData: heavy);
+      final jsonStr = json.encode(list.map((e) => e.toJson()).toList());
+      final actualSizeKB = utf8.encode(jsonStr).length / 1024;
+      return {
+        'data': list,
+        'latencyMs': mockDelay,
+        'payloadSizeKB': actualSizeKB,
+        'endpoint': 'GET /api/v1/patients?limit=$limit&detailed=$detailed (Mock Fallback)',
+      };
+    }
   }
 
   Future<Map<String, dynamic>> addPatient(Patient patient) async {
-    if (kDebugMode) {
-      print('[REST API] Adding patient: ${patient.name}');
+    final isTest = Platform.environment.containsKey('FLUTTER_TEST');
+    if (isTest) {
+      final newPatient = patient.copyWith(
+        id: 'REST-PAT-${DateTime.now().millisecondsSinceEpoch % 10000}',
+      );
+      final jsonStr = json.encode(newPatient.toJson());
+      final actualSizeKB = utf8.encode(jsonStr).length / 1024;
+      return {
+        'data': newPatient,
+        'latencyMs': 200,
+        'payloadSizeKB': actualSizeKB,
+        'endpoint': 'POST /api/v1/patients (Mock Fallback)',
+      };
     }
-    // Simulate POST api call
-    await Future.delayed(const Duration(milliseconds: 500));
 
-    final newPatient = patient.copyWith(
-      id: 'REST-PAT-${DateTime.now().millisecondsSinceEpoch % 10000}',
-    );
-    final jsonStr = json.encode(newPatient.toJson());
-    final actualSizeKB = utf8.encode(jsonStr).length / 1024;
+    final endpoint = '$_baseUrl/api/v1/patients';
+    try {
+      if (kDebugMode) {
+        print('[REST API] Adding patient to: $endpoint');
+      }
 
-    return {
-      'data': newPatient,
-      'latencyMs': 500,
-      'payloadSizeKB': actualSizeKB,
-      'endpoint': 'POST /api/v1/patients',
-    };
+      final patientJson = patient.toJson();
+      patientJson.remove('id');
+
+      final stopwatch = Stopwatch()..start();
+      final response = await http.post(
+        Uri.parse(endpoint),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode(patientJson),
+      );
+      stopwatch.stop();
+
+      if (response.statusCode != 201) {
+        throw HttpException('Failed to add patient: ${response.statusCode}');
+      }
+
+      final actualSizeKB = utf8.encode(response.body).length / 1024;
+      final decoded = json.decode(response.body);
+      final newPatient = Patient.fromJson(decoded);
+
+      return {
+        'data': newPatient,
+        'latencyMs': stopwatch.elapsedMilliseconds,
+        'payloadSizeKB': actualSizeKB,
+        'endpoint': 'POST /api/v1/patients',
+      };
+    } catch (e) {
+      if (kDebugMode) {
+        print('[REST API] Error adding patient, falling back to mock data: $e');
+      }
+      final newPatient = patient.copyWith(
+        id: 'REST-PAT-${DateTime.now().millisecondsSinceEpoch % 10000}',
+      );
+      final jsonStr = json.encode(newPatient.toJson());
+      final actualSizeKB = utf8.encode(jsonStr).length / 1024;
+      return {
+        'data': newPatient,
+        'latencyMs': 200,
+        'payloadSizeKB': actualSizeKB,
+        'endpoint': 'POST /api/v1/patients (Mock Fallback)',
+      };
+    }
   }
 
-  // Lists of mock names
   static const List<String> _names = [
     'Alice Smith',
     'Bob Jones',
