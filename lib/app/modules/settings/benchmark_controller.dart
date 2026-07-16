@@ -34,79 +34,52 @@ class BenchmarkController extends GetxController {
     results.clear();
 
     final protocols = ['REST', 'GraphQL'];
-    final networks = [
-      {'name': '4G (Normal)', 'mult': 1.0},
-      {'name': '3G (2x Slow)', 'mult': 2.0},
-      {'name': '2G (4x Slow)', 'mult': 4.0},
-    ];
-    final sizes = ['Small', 'Medium', 'Large'];
-
-    final totalTests = protocols.length * networks.length * sizes.length;
+    final iterations = 30; // 30 times as required for your thesis experiment!
+    final totalTests = protocols.length * iterations;
     int completed = 0;
 
     for (var proto in protocols) {
-      for (var net in networks) {
-        for (var size in sizes) {
-          final testName = '$proto on ${net['name']} [$size Payload]';
-          currentTestName.value = testName;
+      for (int i = 1; i <= iterations; i++) {
+        final testName = '$proto - Iteration $i [Small Payload]';
+        currentTestName.value = testName;
 
-          // Perform measurement using stopwatch
-          final sw = Stopwatch()..start();
-          double payloadSizeKB = 0.0;
+        final sw = Stopwatch()..start();
+        double payloadSizeKB = 0.0;
 
-          try {
-            if (proto == 'REST') {
-              final result = await _restService.fetchPatients(
-                size.toLowerCase(),
-              );
-              // Calculate latency with mock network multiplier
-              final baseLatency = result['latencyMs'] as int;
-              final simulatedDelay =
-                  (baseLatency * ((net['mult'] as double) - 1.0)).round();
-
-              if (simulatedDelay > 0) {
-                await Future.delayed(Duration(milliseconds: simulatedDelay));
-              }
-
-              payloadSizeKB = result['payloadSizeKB'] as double;
-            } else {
-              final result = await _graphqlService.fetchPatients(
-                size.toLowerCase(),
-              );
-              final baseLatency = result['latencyMs'] as int;
-              final simulatedDelay =
-                  (baseLatency * ((net['mult'] as double) - 1.0)).round();
-
-              if (simulatedDelay > 0) {
-                await Future.delayed(Duration(milliseconds: simulatedDelay));
-              }
-
-              payloadSizeKB = result['payloadSizeKB'] as double;
-            }
-          } catch (e) {
-            // Log fallback error
+        try {
+          if (proto == 'REST') {
+            final result = await _restService.fetchPatients('small');
+            // Adding a tiny delay so the UI updates and requests don't overlap too aggressively
+            await Future.delayed(const Duration(milliseconds: 50));
+            payloadSizeKB = result['payloadSizeKB'] as double;
+          } else {
+            final result = await _graphqlService.fetchPatients('small');
+            await Future.delayed(const Duration(milliseconds: 50));
+            payloadSizeKB = result['payloadSizeKB'] as double;
           }
-
-          sw.stop();
-          final elapsedMs = sw.elapsedMilliseconds;
-
-          results.add(
-            BenchmarkResult(
-              protocol: proto,
-              network: net['name'] as String,
-              size: size,
-              payloadKB: payloadSizeKB,
-              latencyMs: elapsedMs,
-            ),
-          );
-
-          completed++;
-          progress.value = completed / totalTests;
+        } catch (e) {
+          // Log fallback error
         }
+
+        sw.stop();
+        final elapsedMs = sw.elapsedMilliseconds;
+
+        results.add(
+          BenchmarkResult(
+            protocol: proto,
+            network: 'Iteration $i',
+            size: 'Small',
+            payloadKB: payloadSizeKB,
+            latencyMs: elapsedMs,
+          ),
+        );
+
+        completed++;
+        progress.value = completed / totalTests;
       }
     }
 
-    currentTestName.value = 'Benchmark Completed Successfully!';
+    currentTestName.value = 'Experiment Data Collected! (60 total requests)';
     isBenchmarking.value = false;
   }
 
