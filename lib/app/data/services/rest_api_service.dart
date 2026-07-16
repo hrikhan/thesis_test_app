@@ -92,19 +92,19 @@ class RestApiService {
 
     switch (payloadSize.toLowerCase()) {
       case 'small':
-        limit = 5;
+        limit = 10;
         detailed = false;
         mockDelay = 200;
         heavy = false;
         break;
       case 'medium':
-        limit = 45;
+        limit = 100;
         detailed = true;
         mockDelay = 800;
         heavy = true;
         break;
       case 'large':
-        limit = 300;
+        limit = 1000;
         detailed = true;
         mockDelay = 1500;
         heavy = true;
